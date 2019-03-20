@@ -1,0 +1,187 @@
+apiVersion: v1
+kind: Template
+metadata:
+  annotations:
+    description: Fuse application template for the Shinhan Bank
+    tags: java,springboot,fis,jboss-fuse
+    iconClass: icon-rh-integration
+    version: '1.0'
+  name: shb-fuse-app-template
+labels:
+  template: shb-fuse-app-template
+objects:
+- kind: ImageStream
+  apiVersion: v1
+  metadata:
+    annotations:
+      description: project image stream
+    name: "${APPLICATION_NAME}"
+    labels:
+      group: "${APPLICATION_GROUP}"
+      application: "${APPLICATION_NAME}"
+      version: "${APPLICATION_VERSION}"
+      template: shb-fuse-app-template
+  spec: {}
+- kind: BuildConfig
+  apiVersion: v1
+  metadata:
+    annotations:
+      description: build configuration
+    name: "${APPLICATION_NAME}"
+    labels:
+      group: "${APPLICATION_GROUP}"
+      application: "${APPLICATION_NAME}"
+      version: "${APPLICATION_VERSION}"
+      template: shb-fuse-app-template
+  spec:
+    source:
+      type: Binary
+      binary: {}
+    strategy:
+      type: Source
+      sourceStrategy:
+        from:
+          kind: ImageStreamTag
+          namespace: "${IMAGE_STREAM_NAMESPACE}"
+          name: fuse7-java-openshift:${BUILDER_VERSION}
+        forcePull: true
+        incremental: true
+        env:
+        - name: BUILD_LOGLEVEL
+          value: '5'
+    output:
+      to:
+        kind: ImageStreamTag
+        name: "${APPLICATION_NAME}:latest"
+- kind: Service
+  apiVersion: v1
+  metadata:
+    annotations:
+      description: service to expose
+    name: "${APPLICATION_NAME}"
+    labels:
+      group: "${APPLICATION_GROUP}"
+      application: "${APPLICATION_NAME}"
+      version: "${APPLICATION_VERSION}"
+      template: shb-fuse-app-template
+  spec:
+    ports:
+      - port: 8080
+        protocol: TCP
+        targetPort: 8080
+    selector:
+      deploymentConfig: "${APPLICATION_NAME}"
+- kind: DeploymentConfig
+  apiVersion: v1
+  metadata:
+    annotations:
+      description: project deployment configuration
+    name: "${APPLICATION_NAME}"
+    labels:
+      group: "${APPLICATION_GROUP}"
+      application: "${APPLICATION_NAME}"
+      version: "${APPLICATION_VERSION}"
+      template: shb-fuse-app-template
+  spec:
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+        - "${APPLICATION_NAME}"
+        from:
+          kind: ImageStreamTag
+          name: "${APPLICATION_NAME}:latest"
+    replicas: "${{REPLICAS}}"
+    selector:
+      deploymentconfig: "${APPLICATION_NAME}"
+      group: "${APPLICATION_GROUP}"
+      application: "${APPLICATION_NAME}"
+      version: "${APPLICATION_VERSION}"
+    template:
+      metadata:
+        labels:
+          deploymentconfig: "${APPLICATION_NAME}"
+          group: "${APPLICATION_GROUP}"
+          application: "${APPLICATION_NAME}"
+          version: "${APPLICATION_VERSION}"
+      spec:
+        containers:
+        - name: "${APPLICATION_NAME}"
+          image: library/${APPLICATION_NAME}:latest
+          readinessProbe:
+            httpGet:
+              path: "/health"
+              port: 8081
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet:
+              path: "/health"
+              port: 8081
+            initialDelaySeconds: 180
+          ports:
+          - containerPort: 8778
+            name: jolokia
+          env:
+          - name: KUBERNETES_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: "${CPU_REQUEST}"
+              memory: "${MEMORY_REQUEST}"
+            limits:
+              cpu: "${CPU_LIMIT}"
+              memory: "${MEMORY_LIMIT}"
+parameters:
+- name: APPLICATION_NAME
+  displayName: Application Name
+  required: true
+  value: fuse-app
+  description: The name assigned to the application.
+- name: APPLICATION_VERSION
+  displayName: Application Version
+  required: true
+  value: "1.0"
+  description: The application version.
+- name: APPLICATION_GROUP
+  displayName: Application Group
+  required: true
+  value: fuse-group
+  description: The application version.
+- name: REPLICAS
+  displayName: Replica number
+  value: '1'
+  required: true
+  description: amount of replication
+- name: BUILDER_VERSION
+  displayName: Builder version
+  value: '1.2'
+  description: The version of the FIS S2I builder image to use.
+- name: IMAGE_STREAM_NAMESPACE
+  displayName: Image Stream Namespace
+  value: openshift
+  required: true
+  description: Fuse app base image stream namespace
+- name: CPU_REQUEST
+  displayName: CPU request
+  value: '0.2'
+  required: true
+  description: The amount of CPU to request.
+- name: MEMORY_REQUEST
+  displayName: Memory request
+  value: 256Mi
+  required: true
+  description: The amount of memory required for the container to run.
+- name: CPU_LIMIT
+  displayName: CPU limit
+  value: '1.0'
+  required: true
+  description: The amount of CPU the container is limited to use.
+- name: MEMORY_LIMIT
+  displayName: Memory limit
+  value: 256Mi
+  required: true
+  description: The amount of memory the container is limited to use.

@@ -1,0 +1,116 @@
+image:
+  name: registry.access.redhat.com/openshift3/ose-cli
+#services:
+#- name: maven:3-jdk-8
+stages:
+  - build
+  - deploy
+  - tagging
+  
+variables:
+  OPENSHIFT_SERVER: openshift.default.svc.cluster.local
+  OPENSHIFT_DOMAIN: apps.kbos.local
+
+build job:
+  image: maven:3-jdk-8
+  stage: build
+  variables:
+  script:
+    - mvn --settings ./configuration/settings.xml package
+  after_script:
+    # Write group, application name, version from maven info
+    - mkdir variables
+    - mvn help:evaluate -Dexpression=project.groupId -q -DforceStdout >> variables/project.groupId
+    - mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout >> variables/project.artifactId
+    - mvn help:evaluate -Dexpression=project.version -q -DforceStdout >> variables/project.version
+  only:
+    refs: 
+      - master
+  except:
+    changes:
+      - .gitlab-ci.yml
+      - .template
+  environment:
+    name: Development
+  artifacts:
+    paths:
+      #copy jar file, variable, application template files
+      - target/*.jar
+      - variables/
+      - .template/
+deployment job:
+  stage: deploy
+  variables:
+  before_script:
+    - export PROJECT_GROUPID=$(cat variables/project.groupId)
+    - export PROJECT_ARTIFACTID=$(cat variables/project.artifactId)
+    - export PROJECT_VERSION=$(cat variables/project.version)
+  script:
+    - oc login "$OPENSHIFT_SERVER" --username="$OCP_USER_NAME" --password="$OCP_ADMIN_PWD" --insecure-skip-tls-verify
+    # OCP project name can be Gitlab project name as following or specify any other name which defined in user defined variable.
+    - oc project "$CI_PROJECT_NAME" 2> /dev/null || oc new-project "$CI_PROJECT_NAME"
+    
+    - echo $PROJECT_GROUPID
+    - echo $PROJECT_VERSION
+    - echo $PROJECT_ARTIFACTID
+    # Replace app name, group, version
+    - sed -i 's/#APPLICATION_NAME/'"$PROJECT_ARTIFACTID"'/g' .template/project.params
+    - sed -i 's/#APPLICATION_VERSION/'"$PROJECT_VERSION"'/g' .template/project.params
+    - sed -i 's/#APPLICATION_GROUP/'"$PROJECT_GROUPID"'/g' .template/project.params
+    - cat .template/project.params
+    
+    # Apply application template
+    - cat .template/deployment.yml
+    - oc process -f .template/deployment.yml --param-file .template/project.params | oc apply -f-
+    
+    # Build from binary
+    - oc start-build "$PROJECT_ARTIFACTID" --from-file=target/"$PROJECT_ARTIFACTID-$PROJECT_VERSION.jar"
+    
+    # ENV????
+    #- oc get services "$APP" 2> /dev/null || oc new-app "$CI_REPOSITORY_URL"
+    #- "oc get services $APP 2> /dev/null || oc new-app openshift/fuse7-java-openshift:1.2~$CI_REPOSITORY_URL"
+  only:
+    refs: 
+      - master
+  except:
+    changes:
+      - .gitlab-ci.yml
+      - .template
+  when: on_success
+tagging for prod deploy job:
+  image: maven:3-jdk-8
+  stage: tagging
+  variables:
+  before_script:
+  script:
+    - mvn --settings ./configuration/settings.xml clean package
+    
+    - mkdir -p .binaries
+    - cp -rf target/*.jar .binaries/
+    - cp -rf .template .binaries/
+    
+    - git config user.name "${GITLAB_USER_NAME}"
+    - git config user.email "${GITLAB_USER_EMAIL}"
+    
+    #- git branch
+    #- git fetch origin
+    #- git branch
+    #- git pull origin production
+    #- git checkout origin/production
+    #- git branch
+    #- git pull origin production
+    
+    - git checkout production
+    - git branch
+    
+    - git add .binaries
+    - git commit -m "add binaries for prod deployment "
+    - git push https://CI_USER:Zm_Yx4xvHpRekjj5U65T@gitlab.com/edwin.noh/spring-boot-camel-sample.git production
+  only:
+    - production
+  except:
+    changes:
+      - .gitlab-ci.yml
+      - .template
+# Master > Production Merge request #Do maven build and prepare binary file
+# 
